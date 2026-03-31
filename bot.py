@@ -25,7 +25,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 #  KONFIGURASI ─ WAJIB DIISI
 # ═══════════════════════════════════════════════════════════════
 BOT_TOKEN        = os.getenv("8693310648:AAEKPSMabBKyvf5kNt1f8Lc22cFR1W3m1Ik", "GANTI_TOKEN_BOT")
-SPREADSHEET_ID   = os.getenv("1V_wyOLKhQjI3baYzbtDuf4D9KIAWo5UghmQqni44AKs", "GANTI_ID_SPREADSHEET")
+SPREADSHEET_ID   = os.getenv("1xpibt55FLlX1jS-E5QwEM7zmpikhwdkhM-bUoi6fz1M", "GANTI_ID_SPREADSHEET")
 CREDENTIALS_FILE = os.getenv("CREDENTIALS_FILE", "credentials.json")
 
 # Telegram User ID masing-masing (kirim /myid ke bot untuk tahu ID)
