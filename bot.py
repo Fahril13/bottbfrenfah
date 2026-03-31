@@ -24,14 +24,14 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # ═══════════════════════════════════════════════════════════════
 #  KONFIGURASI ─ WAJIB DIISI
 # ═══════════════════════════════════════════════════════════════
-BOT_TOKEN        = os.getenv("BOT_TOKEN", "GANTI_TOKEN_BOT")
-SPREADSHEET_ID   = os.getenv("SPREADSHEET_ID", "GANTI_ID_SPREADSHEET")
+BOT_TOKEN        = os.getenv("8693310648:AAEKPSMabBKyvf5kNt1f8Lc22cFR1W3m1Ik", "GANTI_TOKEN_BOT")
+SPREADSHEET_ID   = os.getenv("1xpibt55FLlX1jS-E5QwEM7zmpikhwdkhM-bUoi6fz1M", "GANTI_ID_SPREADSHEET")
 CREDENTIALS_FILE = os.getenv("CREDENTIALS_FILE", "credentials.json")
 
 # Telegram User ID masing-masing (kirim /myid ke bot untuk tahu ID)
 USERS: dict[str, int] = {
-    "Fahril": 0,   # ← ganti dengan Telegram ID Fahril
-    "Freya" : 0,   # ← ganti dengan Telegram ID Freya
+    "Fahril": 5210728658,   # ← ganti dengan Telegram ID Fahril
+    "Freya" : 6434745020,   # ← ganti dengan Telegram ID Freya
 }
 
 REPORT_WEEKDAY = 0   # 0=Senin
