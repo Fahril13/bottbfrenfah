@@ -25,7 +25,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 #  KONFIGURASI ─ WAJIB DIISI
 # ═══════════════════════════════════════════════════════════════
 BOT_TOKEN        = os.getenv("8693310648:AAEKPSMabBKyvf5kNt1f8Lc22cFR1W3m1Ik", "GANTI_TOKEN_BOT")
-SPREADSHEET_ID   = os.getenv("S1V_wyOLKhQjI3baYzbtDuf4D9KIAWo5UghmQqni44AKs", "GANTI_ID_SPREADSHEET")
+SPREADSHEET_ID   = os.getenv("1V_wyOLKhQjI3baYzbtDuf4D9KIAWo5UghmQqni44AKs", "GANTI_ID_SPREADSHEET")
 CREDENTIALS_FILE = os.getenv("CREDENTIALS_FILE", "credentials.json")
 
 # Telegram User ID masing-masing (kirim /myid ke bot untuk tahu ID)
@@ -70,7 +70,13 @@ SCOPES = [
 ]
 
 def _get_client() -> gspread.Client:
-    creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
+    gc_env = os.getenv("GOOGLE_CREDENTIALS")
+    if gc_env:
+        import json
+        info = json.loads(gc_env)
+        creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+    else:
+        creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
     return gspread.authorize(creds)
 
 def _get_or_create_sheet(spreadsheet, title: str, headers: list[str]):
