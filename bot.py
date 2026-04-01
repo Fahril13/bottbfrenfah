@@ -30,8 +30,8 @@ CREDENTIALS_FILE = os.getenv("CREDENTIALS_FILE", "credentials.json")
 
 # Telegram User ID masing-masing (kirim /myid ke bot untuk tahu ID)
 USERS: dict[str, int] = {
-    "Fahril": 0,   # ← ganti dengan Telegram ID Fahril
-    "Freya" : 0,   # ← ganti dengan Telegram ID Freya
+    "Fahril": 5210728658,   # ← ganti dengan Telegram ID Fahril
+    "Freya" : 6434745020,   # ← ganti dengan Telegram ID Freya
 }
 
 REPORT_WEEKDAY = 0   # 0=Senin
