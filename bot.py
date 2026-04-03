@@ -30,8 +30,8 @@ CREDENTIALS_FILE = os.getenv("CREDENTIALS_FILE", "credentials.json")
 
 # Telegram User ID masing-masing (kirim /myid ke bot untuk tahu ID)
 USERS: dict[str, int] = {
-    "Fahril": 5210728658,   # ← ganti dengan Telegram ID Fahril
-    "Freya" : 6434745020,   # ← ganti dengan Telegram ID Freya
+    "Fahril": 5210728658,
+    "Freya" : 6434745020,
 }
 
 REPORT_WEEKDAY = 0   # 0=Senin
@@ -171,6 +171,16 @@ def db_get_monthly_cats(uid: int):
         cats[key] = cats.get(key, 0) + float(r["Jumlah"])
     return [(k[0], k[1], v) for k, v in sorted(cats.items(), key=lambda x: -x[1])]
 
+def db_has_transaction_today(uid: int) -> bool:
+    """Cek apakah user sudah ada transaksi hari ini (WIB)."""
+    today = datetime.now(WIB).strftime("%Y-%m-%d")
+    ws = _ss().worksheet("Transaksi")
+    rows = ws.get_all_records()
+    for r in rows:
+        if str(r["UserID"]) == str(uid) and str(r["Waktu"]).startswith(today):
+            return True
+    return False
+
 # ─── Tujuan ─────────────────────────────────────────────────────
 def db_get_goals(uid: int):
     ws = _ss().worksheet("Tujuan")
@@ -245,11 +255,6 @@ async def check_auth(u: Update) -> bool:
         return False
     return True
 
-def loading(msg="⏳ Memuat data..."):
-    async def _send(u: Update):
-        return await u.message.reply_text(msg)
-    return _send
-
 # ═══════════════════════════════════════════════════════════════
 #  COMMAND HANDLERS
 # ═══════════════════════════════════════════════════════════════
@@ -285,7 +290,8 @@ async def cmd_start(u: Update, _):
         f"🔗 /spreadsheet — Link Google Sheets\n"
         f"🆔 /myid — Lihat Telegram ID\n\n"
         f"_📊 Data tersimpan permanen di Google Sheets_\n"
-        f"_📬 Laporan otomatis tiap Senin 08:00 WIB_",
+        f"_📬 Laporan otomatis tiap Senin 08:00 WIB_\n"
+        f"_⏰ Reminder harian Freya: 09:00 & 21:00 WIB_",
         parse_mode="Markdown"
     )
 
@@ -310,9 +316,9 @@ async def cmd_saldo(u: Update, _):
     uid  = u.effective_user.id
     name = get_user_name(uid)
     wait = await u.message.reply_text("⏳ Mengambil data...")
-    bal            = await run(db_get_balance, uid)
-    inc7,  exp7,  _ = await run(db_get_summary, uid, 7)
-    inc30, exp30, _ = await run(db_get_summary, uid, 30)
+    bal              = await run(db_get_balance, uid)
+    inc7,  exp7,  _  = await run(db_get_summary, uid, 7)
+    inc30, exp30, _  = await run(db_get_summary, uid, 30)
     await wait.delete()
     await u.message.reply_text(
         f"💼 *Saldo — {name}*\n\n"
@@ -668,6 +674,90 @@ async def send_weekly_report(app):
             log.error(f"Gagal kirim laporan ke {name}: {e}")
 
 # ═══════════════════════════════════════════════════════════════
+#  DAILY REMINDER — FREYA ONLY
+#  Cek dulu apakah hari ini sudah ada transaksi.
+#  Kalau belum → kirim reminder. Kalau sudah → skip.
+# ═══════════════════════════════════════════════════════════════
+
+# Variasi pesan supaya tidak membosankan
+_PAGI_MSGS = [
+    (
+        "☀️ *Selamat pagi, Freya!*\n\n"
+        "Hari baru, catatan baru~ 📒\n"
+        "Jangan lupa catat pemasukan atau pengeluaran hari ini ya!\n\n"
+        "➕ /nabung  |  ➖ /keluar\n\n"
+        "_Nabung dikit-dikit, lama-lama jadi bukit!_ 🏔️"
+    ),
+    (
+        "☀️ *Good morning, Freya!*\n\n"
+        "Yuk mulai hari dengan catat keuangan dulu 💰\n"
+        "Biar makin on track nabungnya!\n\n"
+        "➕ /nabung  |  ➖ /keluar"
+    ),
+    (
+        "🌤️ *Pagi, Freya!*\n\n"
+        "Reminder friendly dari TabunganBot 🤖\n"
+        "Belum ada catatan hari ini nih, yuk update!\n\n"
+        "➕ /nabung  |  ➖ /keluar\n\n"
+        "_Konsisten itu kuncinya!_ 🔑"
+    ),
+]
+
+_MALAM_MSGS = [
+    (
+        "🌙 *Selamat malam, Freya!*\n\n"
+        "Udah akhir hari nih, tapi belum ada catatan keuangan hari ini 😅\n"
+        "Yuk recap sebelum tidur, 2 menit aja!\n\n"
+        "➕ /nabung  |  ➖ /keluar\n\n"
+        "_Tidur tenang kalau keuangan tercatat~_ 😴"
+    ),
+    (
+        "🌙 *Hei Freya, malam!*\n\n"
+        "TabunganBot nemenin kamu malam ini 🤖\n"
+        "Hari ini belum ada transaksi tercatat nih —\n"
+        "ada yang perlu dicatat sebelum tidur?\n\n"
+        "➕ /nabung  |  ➖ /keluar"
+    ),
+    (
+        "🌛 *Reminder malam, Freya!*\n\n"
+        "Belum ada catatan keuangan hari ini lho 👀\n"
+        "Jangan sampai kelewat, yuk catat sekarang!\n\n"
+        "➕ /nabung  |  ➖ /keluar\n\n"
+        "_Sedikit effort, besar manfaatnya!_ 💪"
+    ),
+]
+
+async def send_reminder_freya(app, session: str):
+    """
+    Kirim reminder harian ke Freya HANYA jika belum ada
+    transaksi apapun hari ini (WIB).
+    session: 'pagi' atau 'malam'
+    """
+    uid = USERS.get("Freya")
+    if not uid or uid == 0:
+        return
+
+    try:
+        sudah_catat = await run(db_has_transaction_today, uid)
+
+        if sudah_catat:
+            log.info(f"Reminder {session} Freya dilewati — sudah ada transaksi hari ini.")
+            return
+
+        # Pilih variasi pesan berdasarkan hari agar tidak monoton
+        day_index = datetime.now(WIB).weekday()  # 0–6
+        if session == "pagi":
+            msg = _PAGI_MSGS[day_index % len(_PAGI_MSGS)]
+        else:
+            msg = _MALAM_MSGS[day_index % len(_MALAM_MSGS)]
+
+        await app.bot.send_message(uid, msg, parse_mode="Markdown")
+        log.info(f"Reminder {session} terkirim ke Freya.")
+
+    except Exception as e:
+        log.error(f"Gagal kirim reminder {session} ke Freya: {e}")
+
+# ═══════════════════════════════════════════════════════════════
 #  MAIN
 # ═══════════════════════════════════════════════════════════════
 def main():
@@ -710,15 +800,36 @@ def main():
         app.add_handler(CommandHandler(cmd, fn))
 
     scheduler = AsyncIOScheduler(timezone="Asia/Jakarta")
+
+    # Laporan mingguan — Senin 08:00 WIB (Fahril & Freya)
     scheduler.add_job(
         send_weekly_report, "cron",
         day_of_week=REPORT_WEEKDAY,
         hour=REPORT_HOUR, minute=REPORT_MINUTE,
         args=[app]
     )
+
+    # Reminder harian Freya — pagi 09:00 WIB
+    scheduler.add_job(
+        send_reminder_freya, "cron",
+        hour=9, minute=0,
+        args=[app, "pagi"]
+    )
+
+    # Reminder harian Freya — malam 21:00 WIB
+    scheduler.add_job(
+        send_reminder_freya, "cron",
+        hour=21, minute=0,
+        args=[app, "malam"]
+    )
+
     scheduler.start()
 
     log.info("✅ TabunganBot (Google Sheets) berjalan!")
+    log.info("📅 Jadwal aktif:")
+    log.info("   • Laporan mingguan  → Senin 08:00 WIB")
+    log.info("   • Reminder Freya    → Setiap hari 09:00 WIB (jika belum catat)")
+    log.info("   • Reminder Freya    → Setiap hari 21:00 WIB (jika belum catat)")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
