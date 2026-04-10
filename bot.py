@@ -546,95 +546,130 @@ async def cmd_pesan(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ═══════════════════════════════════════════════════════════════
 #  GROQ AI ASSISTANT
+#  Logic 3 layer (berurutan, tidak pakai AI buat intent):
+#
+#  LAYER 1 — Rule-based: apakah user mau KIRIM PESAN ke partner?
+#             Hanya trigger kalau ada kata eksplisit seperti
+#             "kasih tau", "bilang ke", "ingatkan", dll.
+#             → kalau iya, forward ke partner langsung.
+#
+#  LAYER 2 — Rule-based: apakah user minta DATA dari bot?
+#             "saldo", "laporan", "bersama", "streak", dll.
+#             → kalau iya, panggil fungsi command yang sesuai.
+#
+#  LAYER 3 — Groq AI chat: semua yang tidak masuk layer 1 & 2.
+#             → jawab natural sebagai asisten.
 # ═══════════════════════════════════════════════════════════════
+
 _chat_history: dict[int, list[dict]] = {}
 
-_SYSTEM_PROMPT = """Kamu adalah asisten TabunganBot yang ramah.
+_SYSTEM_PROMPT = """Kamu adalah asisten TabunganBot yang ramah dan pintar.
 Bot ini milik Fahril dan Freya untuk pencatatan keuangan + belajar SNBT/UTBK.
 
 CARA KERJA /nabung DAN /keluar:
 1. Ketik /nabung atau /keluar
 2. Masukkan JUMLAH (angka)
-3. Pilih KATEGORI (tombol)
-4. Masukkan CATATAN — ketik teks ATAU ketik tanda minus "-" untuk SKIP step ini
+3. Pilih KATEGORI (tombol yang muncul)
+4. Masukkan CATATAN — ketik teks bebas ATAU ketik tanda minus "-" untuk SKIP/lewati step ini
 
-MASALAH UMUM:
-- User bilang "aku udah nabung" tapi belum tersimpan → kemungkinan lupa ketik "-" di step catatan. Suruh ketik "-".
-- Kalau stuck → suruh /cancel dulu lalu coba lagi.
-
-FITUR PESAN ANTAR USER:
-- Fahril dan Freya bisa saling kirim pesan lewat bot, bot akan otomatis forward pesan ke partner
-- Bot sudah otomatis mendeteksi dan mengirim — JANGAN bilang ke user untuk pakai /pesan manual
-- Kalau izin belum aktif, arahkan ke /izinkanpesan dan /statuspesan
+MASALAH UMUM YANG SERING TERJADI:
+- User bilang "aku udah nabung tapi kok belum keitung/belum masuk" → hampir pasti lupa ketik "-" di step catatan (step terakhir). Suruh ketik "-" sekarang.
+- Kalau bot tidak merespons atau stuck → suruh ketik /cancel dulu, lalu mulai lagi dari /nabung atau /keluar.
 
 SNBT INFO:
-- Freya lagi bimbel SNBT jadwal kelas PK (Kak Sugeng) dan PM (Kak Nisa)
-- 5 subtes: PU, PK, PM, PBM, LBI
-- Bimbel selesai 18 April 2026
+- Freya sedang bimbel SNBT, jadwal kelas PK (Kak Sugeng) dan PM (Kak Nisa)
+- 5 subtes: PU (Penalaran Umum), PK, PM, PBM (Literasi B.Indo), LBI (Literasi B.Inggris)
+- Ketik /jadwal untuk lihat jadwal lengkap
 
-CUSTOM REMINDER: /ingatkan
+FITUR PESAN KE PARTNER:
+- Untuk kirim pesan ke Fahril/Freya, bilang eksplisit seperti "kasih tau fahril..." atau "bilang ke freya..."
+- Untuk kirim manual: /pesan [teks]
 
-KEPRIBADIAN: Bahasa Indonesia santai, ramah, singkat. Maksimal 3-4 kalimat.
+KEPRIBADIAN: Bahasa Indonesia santai/gaul, ramah, to the point, boleh emoji. Maksimal 3-4 kalimat.
 
-COMMAND PENTING:
-/nabung /keluar /saldo /laporan /streak /jadwal /pesan /izinkanpesan /tolakpesan /statuspesan /ingatkan /daftarpengingat
+COMMAND TERSEDIA:
+/nabung /keluar /saldo /laporan /bulanan /riwayat /streak /jadwal /bersama /tujuan /ingatkan /daftarpengingat /pesan
 """
 
-_INTENT_PROMPT = """Kamu adalah parser intent untuk bot Telegram milik Fahril dan Freya.
+# ── LAYER 1: Rule-based send-to-partner detection ────────────────
+# Keyword yang EKSPLISIT berarti mau kirim/titip pesan ke partner.
+# Sengaja ketat — "bersama", "lihat", "cek" TIDAK masuk di sini.
+_SEND_KEYWORDS = [
+    "kasih tau", "kasih tahu", "kasihtau",
+    "bilang ke", "bilang sama", "bilang ke dia",
+    "ingatkan", "ingetin",
+    "suruh",
+    "titip pesan", "titip ke",
+    "tolong bilang", "tolong kasih tau",
+    "sampaikan ke", "sampaikan ke dia",
+    "beritahu", "beri tau",
+    "forward ke",
+]
 
-Tugasmu: analisis apakah pesan user mengandung niat untuk MENGIRIM PESAN ke partner mereka (Fahril atau Freya).
-
-Partner keywords: "fahril", "freya", "dia", "doi", "pacar", "sayang"
-
-Contoh yang HARUS terdeteksi:
-- "kasih tau fahril jangan lupa makan" → kirim ke Fahril: "jangan lupa makan"
-- "aku udah buat tabungan nih kasih tau freya dia setuju ga" → kirim ke Freya: "dia setuju ga soal tabungan kita?"
-- "bilang ke dia aku kangen" → kirim ke partner: "aku kangen"
-- "tolong ingatkan freya buat belajar malem ini" → kirim ke Freya: "jangan lupa belajar malem ini ya!"
-- "suruh fahril cek saldo" → kirim ke Fahril: "cek saldo dulu ya"
-- "bisa ga kasih tau dia aku bakal telat" → kirim ke partner: "aku bakal telat"
-- "mau kasih tau freya soal tabungan bulan ini" → kirim ke Freya: "ada info soal tabungan bulan ini, tanya aku ya"
-
-Contoh yang TIDAK perlu dikirim:
-- "berapa saldo aku?" → bukan niat kirim pesan
-- "aku mau nabung" → bukan niat kirim pesan
-- "jadwal bimbel hari ini apa?" → bukan niat kirim pesan
-
-Jawab HANYA dalam format JSON berikut, tanpa penjelasan apapun:
-{"send": true, "message": "pesan yang akan dikirim ke partner"}
-atau
-{"send": false, "message": ""}
-
-Pesan yang dihasilkan harus natural dalam bahasa Indonesia, seperti pesan singkat antar pasangan."""
-
-def _ai_detect_send_to_partner(user_text: str, sender_name: str, partner_name: str) -> tuple[bool, str]:
+def _detect_send_intent(text: str, sender_uid: int) -> tuple[bool, str]:
     """
-    Gunakan Groq AI untuk deteksi intent kirim pesan ke partner.
-    Return (detected, pesan_yang_akan_dikirim)
+    Deteksi apakah user mau kirim pesan ke partner.
+    Hanya trigger kalau ada keyword eksplisit — TIDAK pakai AI.
+    Return (detected, extracted_message)
     """
-    try:
-        client = Groq(api_key=GROQ_API_KEY)
-        resp = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": _INTENT_PROMPT},
-                {"role": "user", "content": f"Pengirim: {sender_name}, Partner: {partner_name}\nPesan: {user_text}"}
-            ],
-            max_tokens=100,
-            temperature=0.1,
-        )
-        import json as _json
-        raw = resp.choices[0].message.content.strip()
-        # Bersihkan kalau ada markdown fence
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        result = _json.loads(raw)
-        if result.get("send") and result.get("message"):
-            return True, result["message"]
-        return False, ""
-    except Exception as e:
-        log.warning(f"AI intent detect error: {e}")
-        return False, ""
+    text_lower = text.lower()
 
+    # Semua nama/kata yang merujuk ke partner
+    partner_refs = ["fahril", "freya", "dia", "doi", "pacar", "sayang", "cinta"]
+
+    for kw in _SEND_KEYWORDS:
+        if kw not in text_lower:
+            continue
+
+        # Temukan posisi keyword, ambil teks setelahnya
+        idx       = text_lower.find(kw)
+        after_kw  = text[idx + len(kw):].strip()
+
+        # Hapus nama partner di awal after_kw kalau ada
+        for ref in partner_refs:
+            if after_kw.lower().startswith(ref):
+                after_kw = after_kw[len(ref):].strip()
+                break
+
+        # Pastikan ada isi pesan yang tersisa
+        if len(after_kw) >= 3:
+            return True, after_kw
+
+    return False, ""
+
+# ── LAYER 2: Rule-based data fetch detection ─────────────────────
+# Urut dari panjang ke pendek supaya yang lebih spesifik dicek duluan.
+_DATA_FETCH_MAP: list[tuple[list[str], str]] = [
+    (["tabungan bersama", "rekap bersama", "lihat bersama", "cek bersama",
+      "saldo bersama", "data bersama", "/bersama"], "bersama"),
+    (["saldo aku", "cek saldo", "berapa saldo", "lihat saldo",
+      "saldo sekarang", "/saldo"], "saldo"),
+    (["laporan 7", "laporan minggu", "laporan mingguan",
+      "lihat laporan", "cek laporan", "/laporan"], "laporan"),
+    (["laporan bulan", "laporan bulanan", "rekap bulan",
+      "pengeluaran bulan", "/bulanan"], "bulanan"),
+    (["riwayat transaksi", "transaksi terakhir", "history",
+      "lihat riwayat", "/riwayat"], "riwayat"),
+    (["streak aku", "cek streak", "lihat streak",
+      "streak nabung", "/streak"], "streak"),
+    (["jadwal hari ini", "jadwal bimbel", "jadwal belajar",
+      "kelas hari ini", "ada kelas", "/jadwal"], "jadwal"),
+    (["target tabungan", "lihat target", "progres target",
+      "cek tujuan", "/tujuan"], "tujuan"),
+]
+
+def _detect_data_fetch(text: str) -> str | None:
+    """
+    Deteksi apakah user minta data dari bot.
+    Return nama fetch type, atau None kalau tidak ada.
+    """
+    text_lower = text.lower()
+    for keywords, fetch_type in _DATA_FETCH_MAP:
+        if any(kw in text_lower for kw in keywords):
+            return fetch_type
+    return None
+
+# ── Groq chat (Layer 3) ──────────────────────────────────────────
 def _groq_chat(uid: int, user_message: str, user_name: str) -> str:
     client  = Groq(api_key=GROQ_API_KEY)
     history = _chat_history.get(uid, [])
@@ -651,6 +686,7 @@ def _groq_chat(uid: int, user_message: str, user_name: str) -> str:
     _chat_history[uid] = history
     return reply
 
+# ── Main message handler ─────────────────────────────────────────
 async def handle_ai_message(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = u.effective_user.id
     if not authorized(uid): return
@@ -661,35 +697,57 @@ async def handle_ai_message(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     partner_uid  = _get_partner_uid(uid)
     partner_name = get_user_name(partner_uid)
 
-    # ── Deteksi intent kirim pesan via AI ────────────────────────
     await ctx.bot.send_chat_action(chat_id=u.effective_chat.id, action="typing")
-    detected, extracted_msg = await run(
-        _ai_detect_send_to_partner, msg, sender_name, partner_name
-    )
 
+    # ── LAYER 1: Kirim pesan ke partner ──────────────────────────
+    detected, extracted_msg = _detect_send_intent(msg, uid)
     if detected and extracted_msg:
-        # Langsung kirim tanpa cek izin
         try:
             await ctx.bot.send_message(
                 partner_uid,
                 f"💌 *Pesan dari {sender_name}:*\n\n"
                 f"_{extracted_msg}_\n\n"
                 f"_— dikirim lewat TabunganBot 🤖_\n\n"
-                f"Balas: `/pesan [balasan kamu]`",
+                f"Balas: `/pesan [teks balasan kamu]`",
                 parse_mode="Markdown"
             )
             await u.message.reply_text(
-                f"✅ Pesan udah dikirim ke *{partner_name}*!\n\n"
+                f"✅ Pesan terkirim ke *{partner_name}!*\n\n"
                 f"💬 _{extracted_msg}_",
                 parse_mode="Markdown"
             )
-            log.info(f"AI forward pesan {sender_name}→{partner_name}: {extracted_msg[:50]}")
+            log.info(f"Pesan forward {sender_name}→{partner_name}: {extracted_msg[:60]}")
         except Exception as e:
-            log.error(f"AI forward error: {e}")
-            await u.message.reply_text("❌ Gagal kirim pesan. Pastikan Fahril/Freya sudah /start bot-nya ya.")
+            log.error(f"Forward pesan error: {e}")
+            await u.message.reply_text(
+                f"❌ Gagal kirim pesan ke {partner_name}.\n"
+                f"Pastikan dia sudah pernah /start di bot ini ya."
+            )
         return
 
-    # ── Normal AI chat ────────────────────────────────────────────
+    # ── LAYER 2: Fetch data langsung ─────────────────────────────
+    fetch_type = _detect_data_fetch(msg)
+    if fetch_type:
+        log.info(f"Data fetch '{fetch_type}' dari {sender_name}")
+        if fetch_type == "bersama":
+            await cmd_bersama(u, ctx)
+        elif fetch_type == "saldo":
+            await cmd_saldo(u, ctx)
+        elif fetch_type == "laporan":
+            await cmd_laporan(u, ctx)
+        elif fetch_type == "bulanan":
+            await cmd_bulanan(u, ctx)
+        elif fetch_type == "riwayat":
+            await cmd_riwayat(u, ctx)
+        elif fetch_type == "streak":
+            await cmd_streak(u, ctx)
+        elif fetch_type == "jadwal":
+            await cmd_jadwal(u, ctx)
+        elif fetch_type == "tujuan":
+            await cmd_tujuan(u, ctx)
+        return
+
+    # ── LAYER 3: Normal AI chat ───────────────────────────────────
     try:
         reply = await run(_groq_chat, uid, msg, sender_name or "User")
         await u.message.reply_text(reply)
